@@ -1,0 +1,11 @@
+.{
+    .name = "network_sim",
+    .version = "0.1.0",
+    .minimum_zig_version = "0.13.0", // useless field
+    .dependencies = .{},
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+    },
+}

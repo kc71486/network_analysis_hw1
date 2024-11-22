@@ -86,35 +86,53 @@ pub const System = struct {
                 assert(this.queue_encoder_buffer_limit >= 2);
                 const cur_field: Field = event.field.?;
                 const is_full: bool = this.queue_encoder.items.len == this.queue_encoder_buffer_limit;
-                if (is_full) {
+                if (this.prev_deleted) |tag| {
+                    switch (tag) {
+                        .top => {
+                            assert(cur_field.tag == .bottom);
+                            this.frame_discarded += 1;
+                            this.prev_deleted = null;
+                        },
+                        .bottom => {
+                            @panic("impossible to have bottom in prev_deleted");
+                        },
+                    }
+                } else if (is_full) {
                     switch (cur_field.tag) {
                         .top => {
                             this.frame_discarded += 1;
                             this.prev_deleted = .top;
                         },
                         .bottom => {
+                            assert(this.queue_encoder.getLast().tag == .top);
                             _ = this.queue_encoder.pop();
                             this.frame_discarded += 2;
                             this.prev_deleted = null;
                         },
                     }
                 } else {
-                    if (this.prev_deleted) |tag| {
-                        switch (tag) {
-                            .top => {
-                                this.frame_discarded += 1;
-                                this.prev_deleted = null;
-                            },
-                            .bottom => {
-                                @panic("impossible to have bottom in prev_deleted");
-                            },
-                        }
-                    } else {
-                        try this.queue_encoder.append(cur_field);
-                        this.prev_deleted = null;
-                    }
+                    try this.queue_encoder.append(cur_field);
+                    this.prev_deleted = null;
                 }
                 this.frame_total += 1;
+
+                if (this.encoder_field) |_| {
+                    // server busy
+                } else if (this.queue_encoder.items.len > 0) {
+                    assert(this.queue_encoder.items.len == 1);
+                    const first_field: Field = this.queue_encoder.orderedRemove(0);
+                    const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
+                    try this.event_list.append(.{
+                        .clock = next_clock + server_process_time,
+                        .tag = .departure_encoder,
+                        .field = first_field,
+                    });
+                    this.encoder_field = first_field;
+                } else {
+                    // previous top got discarded, and the queue got emptied
+                    assert(cur_field.tag == .bottom);
+                    assert(this.prev_deleted == null);
+                }
                 var random_arrival: std.Random = undefined;
                 var random_complexity: std.Random = undefined;
                 switch (cur_field.tag) {
@@ -189,7 +207,7 @@ pub const System = struct {
                 if (this.queue_storage.items.len >= 2) {
                     const top_field: Field = this.queue_storage.orderedRemove(0);
                     const bottom_field: Field = this.queue_storage.orderedRemove(0);
-                    assert(top_field.tag == .top); // panic here sometimes
+                    assert(top_field.tag == .top);
                     assert(bottom_field.tag == .bottom);
                     const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
                     try this.event_list.append(.{

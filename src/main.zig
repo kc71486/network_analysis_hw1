@@ -41,11 +41,11 @@ pub fn runOnce(allocator: std.mem.Allocator, interarrival_time: f64, complexity:
         try system.step();
     }
     std.debug.print(
-        "discarded: {d}, total = {d}, ratio: {d:.3}\n",
+        "discarded: {d}, total: {d}, ratio: {d:.3}\n",
         .{ system.frame_discarded, system.frame_total, system.frame_discarded / system.frame_total },
     );
     std.debug.print(
-        "storage uptime: {d:.3}, total = {d:.3}, ratio: {d:.3}\n\n",
+        "storage uptime: {d:.3}, total: {d:.3}, ratio: {d:.3}\n\n",
         .{ system.storage_server_uptime, system.clock, system.storage_server_uptime / system.clock },
     );
 }

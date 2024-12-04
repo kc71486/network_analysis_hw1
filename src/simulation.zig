@@ -11,7 +11,7 @@ pub const System = struct {
     clock: f64,
     encoder_field: ?Field,
     storage_busy: bool,
-    prev_deleted: ?Field.Tag,
+    prev_top_deleted: bool,
     frame_discarded: f64,
     frame_total: f64,
     storage_server_uptime: f64,
@@ -56,7 +56,7 @@ pub const System = struct {
             .clock = 0,
             .encoder_field = null,
             .storage_busy = false,
-            .prev_deleted = null,
+            .prev_top_deleted = false,
             .frame_discarded = 0,
             .frame_total = 0,
             .storage_server_uptime = 0,
@@ -76,7 +76,7 @@ pub const System = struct {
         var random: std.Random = this.prng_arrival_top.random();
         const inter_arrival_time = random.floatExp(f64) * this.mean_inter_arrival_time;
         const new_field: Field = .{
-            .tag = .top,
+            .is_top = true,
             .complexity = random.floatExp(f64) * this.mean_frame_complexity,
         };
         this.event_list.add(.arrival_encoder, .{
@@ -140,33 +140,23 @@ pub const System = struct {
         const cur_field: Field = event.field.?;
         const is_full: bool = this.queue_encoder.items.len == this.queue_encoder_buffer_limit;
         // Determine if keep (add queue) or discard (frame_discarded +).
-        if (this.prev_deleted) |tag| {
-            switch (tag) {
-                .top => {
-                    assert(cur_field.tag == .bottom);
-                    this.frame_discarded += 1;
-                    this.prev_deleted = null;
-                },
-                .bottom => {
-                    @panic("impossible to have bottom in prev_deleted");
-                },
-            }
+        if (this.prev_top_deleted) {
+            assert(!cur_field.is_top); // Only happens when current is bottom.
+            this.frame_discarded += 1;
+            this.prev_top_deleted = false;
         } else if (is_full) {
-            switch (cur_field.tag) {
-                .top => {
-                    this.frame_discarded += 1;
-                    this.prev_deleted = .top;
-                },
-                .bottom => {
-                    assert(this.queue_encoder.getLast().tag == .top);
-                    _ = this.queue_encoder.pop();
-                    this.frame_discarded += 2;
-                    this.prev_deleted = null;
-                },
+            if (cur_field.is_top) {
+                this.frame_discarded += 1;
+                this.prev_top_deleted = true;
+            } else {
+                assert(this.queue_encoder.getLast().is_top);
+                _ = this.queue_encoder.pop();
+                this.frame_discarded += 2;
+                this.prev_top_deleted = false;
             }
         } else {
             try this.queue_encoder.append(cur_field);
-            this.prev_deleted = null;
+            this.prev_top_deleted = false;
         }
         this.frame_total += 1;
 
@@ -185,29 +175,22 @@ pub const System = struct {
             this.encoder_field = first_field;
         } else {
             // Happens when previous top got discarded, and the queue got emptied.
-            assert(cur_field.tag == .bottom);
-            assert(this.prev_deleted == null);
+            assert(!cur_field.is_top);
+            assert(!this.prev_top_deleted);
         }
         var random_arrival: std.Random = undefined;
         var random_complexity: std.Random = undefined;
-        switch (cur_field.tag) {
-            .top => {
-                random_arrival = this.prng_arrival_top.random();
-                random_complexity = this.prng_complexity_top.random();
-            },
-            .bottom => {
-                random_arrival = this.prng_arrival_bottom.random();
-                random_complexity = this.prng_complexity_bottom.random();
-            },
+        if (cur_field.is_top) {
+            random_arrival = this.prng_arrival_top.random();
+            random_complexity = this.prng_complexity_top.random();
+        } else {
+            random_arrival = this.prng_arrival_bottom.random();
+            random_complexity = this.prng_complexity_bottom.random();
         }
         // schedule arrival
         const inter_arrival_time = random_arrival.floatExp(f64) * this.mean_inter_arrival_time;
-        const next_tag: Field.Tag = switch (cur_field.tag) {
-            .top => .bottom,
-            .bottom => .top,
-        };
         const new_field: Field = .{
-            .tag = next_tag,
+            .is_top = !cur_field.is_top, // invert
             .complexity = random_complexity.floatExp(f64) * this.mean_frame_complexity,
         };
         this.event_list.add(.arrival_encoder, .{
@@ -239,8 +222,8 @@ pub const System = struct {
             if (this.queue_storage.items.len == 2) {
                 const top_field: Field = this.queue_storage.orderedRemove(0);
                 const bottom_field: Field = this.queue_storage.orderedRemove(0);
-                assert(top_field.tag == .top);
-                assert(bottom_field.tag == .bottom);
+                assert(top_field.is_top);
+                assert(!bottom_field.is_top);
                 const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
                 this.event_list.add(.departure_storage, .{
                     .clock = next_clock + storage_time,
@@ -257,8 +240,8 @@ pub const System = struct {
         if (this.queue_storage.items.len >= 2) {
             const top_field: Field = this.queue_storage.orderedRemove(0);
             const bottom_field: Field = this.queue_storage.orderedRemove(0);
-            assert(top_field.tag == .top);
-            assert(bottom_field.tag == .bottom);
+            assert(top_field.is_top);
+            assert(!bottom_field.is_top);
             const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
             this.event_list.add(.departure_storage, .{
                 .clock = next_clock + storage_time,
@@ -272,13 +255,8 @@ pub const System = struct {
 };
 
 const Field = struct {
-    tag: Tag,
+    is_top: bool,
     complexity: f64,
-
-    const Tag = enum(i32) {
-        top,
-        bottom,
-    };
 };
 
 const EventList = struct {

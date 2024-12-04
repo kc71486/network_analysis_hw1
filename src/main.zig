@@ -26,7 +26,7 @@ pub fn main() !void {
         defer file.close();
         var writer = file.writer();
         for (result_list) |result| {
-            try writer.print("{} {}\n", .{ result.discard_ratio, result.storage_server_uptime_ratio });
+            try writer.print("{d:.4} {d:.4}\n", .{ result.discard_ratio, result.storage_server_uptime_ratio });
         }
     }
     {
@@ -41,7 +41,7 @@ pub fn main() !void {
         defer file.close();
         var writer = file.writer();
         for (result_list) |result| {
-            try writer.print("{} {}\n", .{ result.discard_ratio, result.storage_server_uptime_ratio });
+            try writer.print("{d:.4} {d:.4}\n", .{ result.discard_ratio, result.storage_server_uptime_ratio });
         }
     }
 }

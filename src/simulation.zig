@@ -135,7 +135,7 @@ pub const System = struct {
                     const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
                     try this.event_list.append(.{
                         .clock = next_clock + server_process_time,
-                        .tag = .departure_encoder,
+                        .tag = .departure_encoder_arrival_storage,
                         .field = first_field,
                     });
                     this.encoder_field = first_field;
@@ -171,9 +171,9 @@ pub const System = struct {
                     .field = new_field,
                 });
             },
-            .departure_encoder => {
+            .departure_encoder_arrival_storage => {
+                // departure_encoder part
                 assert(this.encoder_field != null);
-                const departured_field: Field = this.encoder_field.?;
                 if (this.queue_encoder.items.len == 0) {
                     this.encoder_field = null;
                 } else {
@@ -181,18 +181,12 @@ pub const System = struct {
                     const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
                     try this.event_list.append(.{
                         .clock = next_clock + server_process_time,
-                        .tag = .departure_encoder,
+                        .tag = .departure_encoder_arrival_storage,
                         .field = first_field,
                     });
                     this.encoder_field = first_field;
                 }
-                try this.event_list.append(.{
-                    .clock = next_clock,
-                    .tag = .arrival_storage,
-                    .field = departured_field,
-                });
-            },
-            .arrival_storage => {
+                // arrival_storage part
                 assert(event.field != null);
                 const cur_field: Field = event.field.?;
                 try this.queue_storage.append(cur_field);
@@ -244,8 +238,7 @@ pub const System = struct {
         };
         var event_idx: usize = 0;
         var count_arrival_encoder: u32 = 0;
-        var count_departure_encoder: u32 = 0;
-        var count_arrival_storage: u32 = 0;
+        var count_departure_encoder_arrival_storage: u32 = 0;
         var count_departure_storage: u32 = 0;
         var count_invalid: u32 = 0;
         for (this.event_list.items, 0..) |ev, idx| {
@@ -257,15 +250,13 @@ pub const System = struct {
         for (this.event_list.items) |ev| {
             switch (ev.tag) {
                 .arrival_encoder => count_arrival_encoder += 1,
-                .departure_encoder => count_departure_encoder += 1,
-                .arrival_storage => count_arrival_storage += 1,
+                .departure_encoder_arrival_storage => count_departure_encoder_arrival_storage += 1,
                 .departure_storage => count_departure_storage += 1,
                 .invalid => count_invalid += 1,
             }
         }
         assert(count_arrival_encoder == 1);
-        assert(count_departure_encoder <= 1);
-        assert(count_arrival_storage <= 1);
+        assert(count_departure_encoder_arrival_storage <= 1);
         assert(count_departure_storage <= 1);
         assert(count_invalid == 0);
 
@@ -293,8 +284,7 @@ const Event = struct {
 
     const Tag = enum(i32) {
         arrival_encoder,
-        departure_encoder,
-        arrival_storage,
+        departure_encoder_arrival_storage,
         departure_storage,
         invalid,
     };

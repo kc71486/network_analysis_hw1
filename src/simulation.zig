@@ -21,6 +21,7 @@ pub const System = struct {
     prng_complexity_bottom: std.Random.Xoshiro256,
     allocator: std.mem.Allocator,
 
+    /// Initialize variables. Need to run `step0()` before starting.
     pub fn init(
         allocator: std.mem.Allocator,
         queue_encoder_buffer_limit: usize,
@@ -34,6 +35,14 @@ pub const System = struct {
         seed_complexity_top: u64,
         seed_complexity_bottom: u64,
     ) !System {
+        if (queue_encoder_buffer_limit <= 1) {
+            // Encoder with buffer <= 1 will always throw away data.
+            return error.EncoderBufferTooShort;
+        }
+        if (process_capacity_encoder * frame_size_complexity_ratio / process_capacity_storage > 1.5) {
+            // Storage server process speed is slower than field produce speed by a large margin.
+            return error.StorageServerTooSlow;
+        }
         return .{
             .queue_encoder_buffer_limit = queue_encoder_buffer_limit,
             .mean_inter_arrival_time = mean_inter_arrival_time,
@@ -63,6 +72,7 @@ pub const System = struct {
         this.queue_encoder.deinit();
         this.queue_storage.deinit();
     }
+    /// First step, initiate first event. Note: `System.init()` is the one that initialize variables.
     pub fn step0(this: *System) !void {
         var random: std.Random = this.prng_arrival_top.random();
         const inter_arrival_time = random.floatExp(f64) * this.mean_inter_arrival_time;
@@ -76,6 +86,7 @@ pub const System = struct {
             .field = new_field,
         });
     }
+    /// All subsequent steps. Updates state every time this function is called.
     pub fn step(this: *System) !void {
         var event: Event = try this.getEvent();
         _ = &event;

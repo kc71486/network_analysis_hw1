@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 
+# copy from other people
 
 # 繪製圖表的函數
 def plot():

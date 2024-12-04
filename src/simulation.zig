@@ -111,10 +111,6 @@ pub const System = struct {
             .field = undefined,
         };
         var event_idx: usize = 0;
-        var count_arrival_encoder: u32 = 0;
-        var count_departure_encoder_arrival_storage: u32 = 0;
-        var count_departure_storage: u32 = 0;
-        var count_invalid: u32 = 0;
         const event_tag_arr: []const EnumField = @typeInfo(Event.Tag).@"enum".fields;
         inline for (event_tag_arr) |event_tag| {
             const ev_opt = this.event_list.items[event_tag.value];
@@ -125,21 +121,8 @@ pub const System = struct {
                 }
             }
         }
-        inline for (event_tag_arr) |event_tag| {
-            const ev_opt = this.event_list.items[event_tag.value];
-            if (ev_opt) |_| {
-                switch (@as(Event.Tag, @enumFromInt(event_tag.value))) {
-                    .arrival_encoder => count_arrival_encoder += 1,
-                    .departure_encoder_arrival_storage => count_departure_encoder_arrival_storage += 1,
-                    .departure_storage => count_departure_storage += 1,
-                    .invalid => count_invalid += 1,
-                }
-            }
-        }
-        assert(count_arrival_encoder == 1);
-        assert(count_departure_encoder_arrival_storage <= 1);
-        assert(count_departure_storage <= 1);
-        assert(count_invalid == 0);
+        assert(this.event_list.items[@intFromEnum(Event.Tag.arrival_encoder)] != null);
+        assert(this.event_list.items[@intFromEnum(Event.Tag.invalid)] == null);
 
         this.event_list.items[event_idx] = null;
         assert(event.clock != std.math.inf(f64));
@@ -305,17 +288,17 @@ const EventList = struct {
             .items = .{null} ** item_len,
         };
     }
-    // Set the key to value
-    pub fn set(this: *EventList, key: Event.Tag, value: Event) void {
-        this.items[@intFromEnum(key)] = value;
+    // Set the tag to event
+    pub fn set(this: *EventList, tag: Event.Tag, event: Event) void {
+        this.items[@intFromEnum(tag)] = event;
     }
-    // Remove the key
-    pub fn remove(this: *EventList, key: Event.Tag) void {
-        this.items[@intFromEnum(key)] = null;
+    // Remove the tag
+    pub fn remove(this: *EventList, tag: Event.Tag) void {
+        this.items[@intFromEnum(tag)] = null;
     }
-    // Get the value from key
-    pub fn get(this: *const EventList, key: Event.Tag) *Event {
-        return *this.items[@intFromEnum(key)];
+    // Get the value from tag
+    pub fn get(this: *const EventList, tag: Event.Tag) *Event {
+        return *this.items[@intFromEnum(tag)];
     }
 };
 

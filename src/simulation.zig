@@ -5,7 +5,7 @@ pub const System = struct {
     frame_size_complexity_ratio: f64,
     process_capacity_encoder: f64,
     process_capacity_storage: f64,
-    event_list: std.ArrayList(Event),
+    event_list: EventList,
     queue_encoder: std.ArrayList(Field),
     queue_storage: std.ArrayList(Field),
     clock: f64,
@@ -50,7 +50,7 @@ pub const System = struct {
             .frame_size_complexity_ratio = frame_size_complexity_ratio,
             .process_capacity_encoder = process_capacity_encoder,
             .process_capacity_storage = process_capacity_storage,
-            .event_list = std.ArrayList(Event).init(allocator),
+            .event_list = EventList.init(),
             .queue_encoder = std.ArrayList(Field).init(allocator),
             .queue_storage = std.ArrayList(Field).init(allocator),
             .clock = 0,
@@ -68,7 +68,6 @@ pub const System = struct {
         };
     }
     pub fn deinit(this: *System) void {
-        this.event_list.deinit();
         this.queue_encoder.deinit();
         this.queue_storage.deinit();
     }
@@ -80,7 +79,7 @@ pub const System = struct {
             .tag = .top,
             .complexity = random.floatExp(f64) * this.mean_frame_complexity,
         };
-        try this.event_list.append(.{
+        this.event_list.set(.arrival_encoder, .{
             .clock = inter_arrival_time,
             .tag = .arrival_encoder,
             .field = new_field,
@@ -106,7 +105,6 @@ pub const System = struct {
         this.clock = next_clock;
     }
     fn getEvent(this: *System) !Event {
-        assert(this.event_list.items.len > 0);
         var event: Event = .{
             .clock = std.math.inf(f64),
             .tag = .invalid,
@@ -117,18 +115,25 @@ pub const System = struct {
         var count_departure_encoder_arrival_storage: u32 = 0;
         var count_departure_storage: u32 = 0;
         var count_invalid: u32 = 0;
-        for (this.event_list.items, 0..) |ev, idx| {
-            if (ev.clock <= event.clock) {
-                event = ev;
-                event_idx = idx;
+        const event_tag_arr: []const EnumField = @typeInfo(Event.Tag).@"enum".fields;
+        inline for (event_tag_arr) |event_tag| {
+            const ev_opt = this.event_list.items[event_tag.value];
+            if (ev_opt) |ev| {
+                if (ev.clock <= event.clock) {
+                    event = ev;
+                    event_idx = event_tag.value;
+                }
             }
         }
-        for (this.event_list.items) |ev| {
-            switch (ev.tag) {
-                .arrival_encoder => count_arrival_encoder += 1,
-                .departure_encoder_arrival_storage => count_departure_encoder_arrival_storage += 1,
-                .departure_storage => count_departure_storage += 1,
-                .invalid => count_invalid += 1,
+        inline for (event_tag_arr) |event_tag| {
+            const ev_opt = this.event_list.items[event_tag.value];
+            if (ev_opt) |_| {
+                switch (@as(Event.Tag, @enumFromInt(event_tag.value))) {
+                    .arrival_encoder => count_arrival_encoder += 1,
+                    .departure_encoder_arrival_storage => count_departure_encoder_arrival_storage += 1,
+                    .departure_storage => count_departure_storage += 1,
+                    .invalid => count_invalid += 1,
+                }
             }
         }
         assert(count_arrival_encoder == 1);
@@ -136,9 +141,10 @@ pub const System = struct {
         assert(count_departure_storage <= 1);
         assert(count_invalid == 0);
 
-        _ = this.event_list.orderedRemove(event_idx);
+        this.event_list.items[event_idx] = null;
         assert(event.clock != std.math.inf(f64));
         assert(event.tag != .invalid);
+
         return event;
     }
     /// Handle encoder arrival event.
@@ -183,7 +189,7 @@ pub const System = struct {
             assert(this.queue_encoder.items.len == 1);
             const first_field: Field = this.queue_encoder.orderedRemove(0);
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
-            try this.event_list.append(.{
+            this.event_list.set(.departure_encoder_arrival_storage, .{
                 .clock = next_clock + server_process_time,
                 .tag = .departure_encoder_arrival_storage,
                 .field = first_field,
@@ -215,7 +221,7 @@ pub const System = struct {
             .tag = next_tag,
             .complexity = random_complexity.floatExp(f64) * this.mean_frame_complexity,
         };
-        try this.event_list.append(.{
+        this.event_list.set(.arrival_encoder, .{
             .clock = next_clock + inter_arrival_time,
             .tag = .arrival_encoder,
             .field = new_field,
@@ -230,7 +236,7 @@ pub const System = struct {
         } else {
             const first_field: Field = this.queue_encoder.orderedRemove(0);
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
-            try this.event_list.append(.{
+            this.event_list.set(.departure_encoder_arrival_storage, .{
                 .clock = next_clock + server_process_time,
                 .tag = .departure_encoder_arrival_storage,
                 .field = first_field,
@@ -247,7 +253,7 @@ pub const System = struct {
                 assert(top_field.tag == .top);
                 assert(bottom_field.tag == .bottom);
                 const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
-                try this.event_list.append(.{
+                this.event_list.set(.departure_storage, .{
                     .clock = next_clock + storage_time,
                     .tag = .departure_storage,
                     .field = null, // field drain
@@ -266,7 +272,7 @@ pub const System = struct {
             assert(top_field.tag == .top);
             assert(bottom_field.tag == .bottom);
             const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
-            try this.event_list.append(.{
+            this.event_list.set(.departure_storage, .{
                 .clock = next_clock + storage_time,
                 .tag = .departure_storage,
                 .field = null, // field drain
@@ -288,12 +294,37 @@ const Field = struct {
     };
 };
 
+const EventList = struct {
+    const item_len: usize = @typeInfo(Event.Tag).@"enum".fields.len;
+
+    /// Underlying array.
+    items: [item_len]?Event,
+
+    pub fn init() EventList {
+        return .{
+            .items = .{null} ** item_len,
+        };
+    }
+    // Set the key to value
+    pub fn set(this: *EventList, key: Event.Tag, value: Event) void {
+        this.items[@intFromEnum(key)] = value;
+    }
+    // Remove the key
+    pub fn remove(this: *EventList, key: Event.Tag) void {
+        this.items[@intFromEnum(key)] = null;
+    }
+    // Get the value from key
+    pub fn get(this: *const EventList, key: Event.Tag) *Event {
+        return *this.items[@intFromEnum(key)];
+    }
+};
+
 const Event = struct {
     clock: f64,
     tag: Tag,
     field: ?Field,
 
-    const Tag = enum(i32) {
+    const Tag = enum(u32) {
         arrival_encoder,
         departure_encoder_arrival_storage,
         departure_storage,
@@ -308,3 +339,4 @@ pub fn assert(ok: bool) void {
 }
 
 const std = @import("std");
+const EnumField = std.builtin.Type.EnumField;

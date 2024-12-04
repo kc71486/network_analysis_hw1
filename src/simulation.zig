@@ -136,6 +136,7 @@ pub const System = struct {
         assert(this.queue_encoder_buffer_limit >= 2);
         const cur_field: Field = event.field.?;
         const is_full: bool = this.queue_encoder.items.len == this.queue_encoder_buffer_limit;
+        // Determine if keep (add queue) or discard (frame_discarded +).
         if (this.prev_deleted) |tag| {
             switch (tag) {
                 .top => {
@@ -166,6 +167,7 @@ pub const System = struct {
         }
         this.frame_total += 1;
 
+        // Schedule departure if server is empty and queue have something.
         if (this.encoder_field) |_| {
             // server busy
         } else if (this.queue_encoder.items.len > 0) {
@@ -179,7 +181,7 @@ pub const System = struct {
             });
             this.encoder_field = first_field;
         } else {
-            // previous top got discarded, and the queue got emptied
+            // Happens when previous top got discarded, and the queue got emptied.
             assert(cur_field.tag == .bottom);
             assert(this.prev_deleted == null);
         }
@@ -195,6 +197,7 @@ pub const System = struct {
                 random_complexity = this.prng_complexity_bottom.random();
             },
         }
+        // schedule arrival
         const inter_arrival_time = random_arrival.floatExp(f64) * this.mean_inter_arrival_time;
         const next_tag: Field.Tag = switch (cur_field.tag) {
             .top => .bottom,
@@ -290,10 +293,12 @@ const EventList = struct {
     }
     // Set the tag to event
     pub fn set(this: *EventList, tag: Event.Tag, event: Event) void {
+        assert(this.items[@intFromEnum(tag)] == null);
         this.items[@intFromEnum(tag)] = event;
     }
     // Remove the tag
     pub fn remove(this: *EventList, tag: Event.Tag) void {
+        assert(this.items[@intFromEnum(tag)] != null);
         this.items[@intFromEnum(tag)] = null;
     }
     // Get the value from tag

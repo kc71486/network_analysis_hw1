@@ -79,7 +79,7 @@ pub const System = struct {
             .tag = .top,
             .complexity = random.floatExp(f64) * this.mean_frame_complexity,
         };
-        this.event_list.set(.arrival_encoder, .{
+        this.event_list.add(.arrival_encoder, .{
             .clock = inter_arrival_time,
             .tag = .arrival_encoder,
             .field = new_field,
@@ -136,6 +136,7 @@ pub const System = struct {
         assert(this.queue_encoder_buffer_limit >= 2);
         const cur_field: Field = event.field.?;
         const is_full: bool = this.queue_encoder.items.len == this.queue_encoder_buffer_limit;
+        // Determine if keep (add queue) or discard (frame_discarded +).
         if (this.prev_deleted) |tag| {
             switch (tag) {
                 .top => {
@@ -166,20 +167,21 @@ pub const System = struct {
         }
         this.frame_total += 1;
 
+        // Schedule departure if server is empty and queue have something.
         if (this.encoder_field) |_| {
             // server busy
         } else if (this.queue_encoder.items.len > 0) {
             assert(this.queue_encoder.items.len == 1);
             const first_field: Field = this.queue_encoder.orderedRemove(0);
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
-            this.event_list.set(.departure_encoder_arrival_storage, .{
+            this.event_list.add(.departure_encoder_arrival_storage, .{
                 .clock = next_clock + server_process_time,
                 .tag = .departure_encoder_arrival_storage,
                 .field = first_field,
             });
             this.encoder_field = first_field;
         } else {
-            // previous top got discarded, and the queue got emptied
+            // Happens when previous top got discarded, and the queue got emptied.
             assert(cur_field.tag == .bottom);
             assert(this.prev_deleted == null);
         }
@@ -195,6 +197,7 @@ pub const System = struct {
                 random_complexity = this.prng_complexity_bottom.random();
             },
         }
+        // schedule arrival
         const inter_arrival_time = random_arrival.floatExp(f64) * this.mean_inter_arrival_time;
         const next_tag: Field.Tag = switch (cur_field.tag) {
             .top => .bottom,
@@ -204,7 +207,7 @@ pub const System = struct {
             .tag = next_tag,
             .complexity = random_complexity.floatExp(f64) * this.mean_frame_complexity,
         };
-        this.event_list.set(.arrival_encoder, .{
+        this.event_list.add(.arrival_encoder, .{
             .clock = next_clock + inter_arrival_time,
             .tag = .arrival_encoder,
             .field = new_field,
@@ -219,7 +222,7 @@ pub const System = struct {
         } else {
             const first_field: Field = this.queue_encoder.orderedRemove(0);
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
-            this.event_list.set(.departure_encoder_arrival_storage, .{
+            this.event_list.add(.departure_encoder_arrival_storage, .{
                 .clock = next_clock + server_process_time,
                 .tag = .departure_encoder_arrival_storage,
                 .field = first_field,
@@ -236,7 +239,7 @@ pub const System = struct {
                 assert(top_field.tag == .top);
                 assert(bottom_field.tag == .bottom);
                 const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
-                this.event_list.set(.departure_storage, .{
+                this.event_list.add(.departure_storage, .{
                     .clock = next_clock + storage_time,
                     .tag = .departure_storage,
                     .field = null, // field drain
@@ -255,7 +258,7 @@ pub const System = struct {
             assert(top_field.tag == .top);
             assert(bottom_field.tag == .bottom);
             const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
-            this.event_list.set(.departure_storage, .{
+            this.event_list.add(.departure_storage, .{
                 .clock = next_clock + storage_time,
                 .tag = .departure_storage,
                 .field = null, // field drain
@@ -288,12 +291,14 @@ const EventList = struct {
             .items = .{null} ** item_len,
         };
     }
-    // Set the tag to event
-    pub fn set(this: *EventList, tag: Event.Tag, event: Event) void {
+    // Add the event with tag
+    pub fn add(this: *EventList, tag: Event.Tag, event: Event) void {
+        assert(this.items[@intFromEnum(tag)] == null);
         this.items[@intFromEnum(tag)] = event;
     }
-    // Remove the tag
+    // Remove the event with tag
     pub fn remove(this: *EventList, tag: Event.Tag) void {
+        assert(this.items[@intFromEnum(tag)] != null);
         this.items[@intFromEnum(tag)] = null;
     }
     // Get the value from tag

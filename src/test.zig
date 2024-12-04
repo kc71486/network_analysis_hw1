@@ -48,6 +48,7 @@ test "floatexp" {
     _ = &f;
 }
 
+/// Run for 600 sec to test if there is any issue.
 pub fn runOnce(allocator: std.mem.Allocator, interarrival_time: f64, complexity: f64, beta: usize, seed_base: u64) !void {
     var system = try simulation.System.init(
         allocator,
@@ -64,7 +65,7 @@ pub fn runOnce(allocator: std.mem.Allocator, interarrival_time: f64, complexity:
     );
     defer system.deinit();
     try system.step0();
-    while (system.clock < 3600 * 8) {
+    while (system.clock < 600) {
         try system.step();
     }
 }

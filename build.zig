@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
 
     // run exe
     const run_exe = b.addRunArtifact(exe);
-    run_exe.setCwd(b.path("zig-out/bin"));
+    // run_exe.setCwd(b.path("zig-out/bin"));
     if (b.args) |args| {
         run_exe.addArgs(args);
     }

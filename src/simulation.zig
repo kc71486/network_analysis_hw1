@@ -93,137 +93,13 @@ pub const System = struct {
         const next_clock: f64 = event.clock;
         switch (event.tag) {
             .arrival_encoder => {
-                assert(event.field != null);
-                assert(this.queue_encoder_buffer_limit >= 2);
-                const cur_field: Field = event.field.?;
-                const is_full: bool = this.queue_encoder.items.len == this.queue_encoder_buffer_limit;
-                if (this.prev_deleted) |tag| {
-                    switch (tag) {
-                        .top => {
-                            assert(cur_field.tag == .bottom);
-                            this.frame_discarded += 1;
-                            this.prev_deleted = null;
-                        },
-                        .bottom => {
-                            @panic("impossible to have bottom in prev_deleted");
-                        },
-                    }
-                } else if (is_full) {
-                    switch (cur_field.tag) {
-                        .top => {
-                            this.frame_discarded += 1;
-                            this.prev_deleted = .top;
-                        },
-                        .bottom => {
-                            assert(this.queue_encoder.getLast().tag == .top);
-                            _ = this.queue_encoder.pop();
-                            this.frame_discarded += 2;
-                            this.prev_deleted = null;
-                        },
-                    }
-                } else {
-                    try this.queue_encoder.append(cur_field);
-                    this.prev_deleted = null;
-                }
-                this.frame_total += 1;
-
-                if (this.encoder_field) |_| {
-                    // server busy
-                } else if (this.queue_encoder.items.len > 0) {
-                    assert(this.queue_encoder.items.len == 1);
-                    const first_field: Field = this.queue_encoder.orderedRemove(0);
-                    const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
-                    try this.event_list.append(.{
-                        .clock = next_clock + server_process_time,
-                        .tag = .departure_encoder_arrival_storage,
-                        .field = first_field,
-                    });
-                    this.encoder_field = first_field;
-                } else {
-                    // previous top got discarded, and the queue got emptied
-                    assert(cur_field.tag == .bottom);
-                    assert(this.prev_deleted == null);
-                }
-                var random_arrival: std.Random = undefined;
-                var random_complexity: std.Random = undefined;
-                switch (cur_field.tag) {
-                    .top => {
-                        random_arrival = this.prng_arrival_top.random();
-                        random_complexity = this.prng_complexity_top.random();
-                    },
-                    .bottom => {
-                        random_arrival = this.prng_arrival_bottom.random();
-                        random_complexity = this.prng_complexity_bottom.random();
-                    },
-                }
-                const inter_arrival_time = random_arrival.floatExp(f64) * this.mean_inter_arrival_time;
-                const next_tag: Field.Tag = switch (cur_field.tag) {
-                    .top => .bottom,
-                    .bottom => .top,
-                };
-                const new_field: Field = .{
-                    .tag = next_tag,
-                    .complexity = random_complexity.floatExp(f64) * this.mean_frame_complexity,
-                };
-                try this.event_list.append(.{
-                    .clock = next_clock + inter_arrival_time,
-                    .tag = .arrival_encoder,
-                    .field = new_field,
-                });
+                try this.handleArrivalEncoder(event, next_clock);
             },
             .departure_encoder_arrival_storage => {
-                // departure_encoder part
-                assert(this.encoder_field != null);
-                if (this.queue_encoder.items.len == 0) {
-                    this.encoder_field = null;
-                } else {
-                    const first_field: Field = this.queue_encoder.orderedRemove(0);
-                    const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
-                    try this.event_list.append(.{
-                        .clock = next_clock + server_process_time,
-                        .tag = .departure_encoder_arrival_storage,
-                        .field = first_field,
-                    });
-                    this.encoder_field = first_field;
-                }
-                // arrival_storage part
-                assert(event.field != null);
-                const cur_field: Field = event.field.?;
-                try this.queue_storage.append(cur_field);
-                if (!this.storage_busy) {
-                    if (this.queue_storage.items.len == 2) {
-                        const top_field: Field = this.queue_storage.orderedRemove(0);
-                        const bottom_field: Field = this.queue_storage.orderedRemove(0);
-                        assert(top_field.tag == .top);
-                        assert(bottom_field.tag == .bottom);
-                        const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
-                        try this.event_list.append(.{
-                            .clock = next_clock + storage_time,
-                            .tag = .departure_storage,
-                            .field = null, // field drain
-                        });
-                        this.storage_busy = true;
-                        this.storage_server_uptime += next_clock - this.clock;
-                    }
-                }
+                try this.handleDepartureEncoderArrivalStorage(event, next_clock);
             },
             .departure_storage => {
-                assert(this.storage_busy);
-                if (this.queue_storage.items.len >= 2) {
-                    const top_field: Field = this.queue_storage.orderedRemove(0);
-                    const bottom_field: Field = this.queue_storage.orderedRemove(0);
-                    assert(top_field.tag == .top);
-                    assert(bottom_field.tag == .bottom);
-                    const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
-                    try this.event_list.append(.{
-                        .clock = next_clock + storage_time,
-                        .tag = .departure_storage,
-                        .field = null, // field drain
-                    });
-                    this.storage_server_uptime += storage_time;
-                } else {
-                    this.storage_busy = false;
-                }
+                try this.handleDepartureStorage(next_clock);
             },
             .invalid => @panic("invalid event"),
         }
@@ -264,6 +140,141 @@ pub const System = struct {
         assert(event.clock != std.math.inf(f64));
         assert(event.tag != .invalid);
         return event;
+    }
+    /// Handle encoder arrival event.
+    fn handleArrivalEncoder(this: *System, event: Event, next_clock: f64) !void {
+        assert(event.field != null);
+        assert(this.queue_encoder_buffer_limit >= 2);
+        const cur_field: Field = event.field.?;
+        const is_full: bool = this.queue_encoder.items.len == this.queue_encoder_buffer_limit;
+        if (this.prev_deleted) |tag| {
+            switch (tag) {
+                .top => {
+                    assert(cur_field.tag == .bottom);
+                    this.frame_discarded += 1;
+                    this.prev_deleted = null;
+                },
+                .bottom => {
+                    @panic("impossible to have bottom in prev_deleted");
+                },
+            }
+        } else if (is_full) {
+            switch (cur_field.tag) {
+                .top => {
+                    this.frame_discarded += 1;
+                    this.prev_deleted = .top;
+                },
+                .bottom => {
+                    assert(this.queue_encoder.getLast().tag == .top);
+                    _ = this.queue_encoder.pop();
+                    this.frame_discarded += 2;
+                    this.prev_deleted = null;
+                },
+            }
+        } else {
+            try this.queue_encoder.append(cur_field);
+            this.prev_deleted = null;
+        }
+        this.frame_total += 1;
+
+        if (this.encoder_field) |_| {
+            // server busy
+        } else if (this.queue_encoder.items.len > 0) {
+            assert(this.queue_encoder.items.len == 1);
+            const first_field: Field = this.queue_encoder.orderedRemove(0);
+            const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
+            try this.event_list.append(.{
+                .clock = next_clock + server_process_time,
+                .tag = .departure_encoder_arrival_storage,
+                .field = first_field,
+            });
+            this.encoder_field = first_field;
+        } else {
+            // previous top got discarded, and the queue got emptied
+            assert(cur_field.tag == .bottom);
+            assert(this.prev_deleted == null);
+        }
+        var random_arrival: std.Random = undefined;
+        var random_complexity: std.Random = undefined;
+        switch (cur_field.tag) {
+            .top => {
+                random_arrival = this.prng_arrival_top.random();
+                random_complexity = this.prng_complexity_top.random();
+            },
+            .bottom => {
+                random_arrival = this.prng_arrival_bottom.random();
+                random_complexity = this.prng_complexity_bottom.random();
+            },
+        }
+        const inter_arrival_time = random_arrival.floatExp(f64) * this.mean_inter_arrival_time;
+        const next_tag: Field.Tag = switch (cur_field.tag) {
+            .top => .bottom,
+            .bottom => .top,
+        };
+        const new_field: Field = .{
+            .tag = next_tag,
+            .complexity = random_complexity.floatExp(f64) * this.mean_frame_complexity,
+        };
+        try this.event_list.append(.{
+            .clock = next_clock + inter_arrival_time,
+            .tag = .arrival_encoder,
+            .field = new_field,
+        });
+    }
+    /// Handle encoder departure and storage arrival event.
+    fn handleDepartureEncoderArrivalStorage(this: *System, event: Event, next_clock: f64) !void {
+        assert(this.encoder_field != null);
+        // departure_encoder part
+        if (this.queue_encoder.items.len == 0) {
+            this.encoder_field = null;
+        } else {
+            const first_field: Field = this.queue_encoder.orderedRemove(0);
+            const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
+            try this.event_list.append(.{
+                .clock = next_clock + server_process_time,
+                .tag = .departure_encoder_arrival_storage,
+                .field = first_field,
+            });
+            this.encoder_field = first_field;
+        }
+        // arrival_storage part
+        const cur_field: Field = event.field.?;
+        try this.queue_storage.append(cur_field);
+        if (!this.storage_busy) {
+            if (this.queue_storage.items.len == 2) {
+                const top_field: Field = this.queue_storage.orderedRemove(0);
+                const bottom_field: Field = this.queue_storage.orderedRemove(0);
+                assert(top_field.tag == .top);
+                assert(bottom_field.tag == .bottom);
+                const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
+                try this.event_list.append(.{
+                    .clock = next_clock + storage_time,
+                    .tag = .departure_storage,
+                    .field = null, // field drain
+                });
+                this.storage_busy = true;
+                this.storage_server_uptime += next_clock - this.clock;
+            }
+        }
+    }
+    /// Handle storage departure event.
+    fn handleDepartureStorage(this: *System, next_clock: f64) !void {
+        assert(this.storage_busy);
+        if (this.queue_storage.items.len >= 2) {
+            const top_field: Field = this.queue_storage.orderedRemove(0);
+            const bottom_field: Field = this.queue_storage.orderedRemove(0);
+            assert(top_field.tag == .top);
+            assert(bottom_field.tag == .bottom);
+            const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
+            try this.event_list.append(.{
+                .clock = next_clock + storage_time,
+                .tag = .departure_storage,
+                .field = null, // field drain
+            });
+            this.storage_server_uptime += storage_time;
+        } else {
+            this.storage_busy = false;
+        }
     }
 };
 

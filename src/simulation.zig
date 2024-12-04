@@ -90,6 +90,9 @@ pub const System = struct {
         var event: Event = try this.getEvent();
         _ = &event;
         const next_clock: f64 = event.clock;
+        if (this.storage_busy) {
+            this.storage_server_uptime += next_clock - this.clock;
+        }
         switch (event.tag) {
             .arrival_encoder => {
                 try this.handleArrivalEncoder(event, next_clock);
@@ -245,7 +248,6 @@ pub const System = struct {
                     .field = null, // field drain
                 });
                 this.storage_busy = true;
-                this.storage_server_uptime += next_clock - this.clock;
             }
         }
     }
@@ -263,7 +265,6 @@ pub const System = struct {
                 .tag = .departure_storage,
                 .field = null, // field drain
             });
-            this.storage_server_uptime += storage_time;
         } else {
             this.storage_busy = false;
         }

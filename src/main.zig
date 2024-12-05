@@ -93,23 +93,39 @@ pub fn argParse(allocator: std.mem.Allocator) !ArgOptions {
 
 /// Simulate and print
 pub fn simulatePrint(config: *const SimulatePrintConfig) !void {
-    var result_list: []SimulationResult = try config.allocator.alloc(SimulationResult, config.beta_arr.len);
+    const thread_list: []std.Thread = try config.allocator.alloc(std.Thread, config.beta_arr.len);
+    defer config.allocator.free(thread_list);
+    const gpa_list: []std.heap.GeneralPurposeAllocator(.{}) = try config.allocator.alloc(std.heap.GeneralPurposeAllocator(.{}), config.beta_arr.len);
+    defer config.allocator.free(gpa_list);
+    const result_list: []SimulationResult = try config.allocator.alloc(SimulationResult, config.beta_arr.len);
     defer config.allocator.free(result_list);
     // Pass argument to `runOnce`.
-    for (config.beta_arr, 0..) |beta, idx| {
+    for (config.beta_arr, thread_list, gpa_list, result_list) |beta, *thread, *gpa, *result| {
+        gpa.* = std.heap.GeneralPurposeAllocator(.{}).init;
+        thread.* = try std.Thread.spawn(.{
+            .allocator = config.allocator,
+        }, runOnce, .{
+            gpa.allocator(), // allocator
+            config.interarrival_time, // interarrival_time
+            config.complexity, // complexity
+            beta, // beta
+            config.seed, // seed_base
+            result, // out_result
+        });
+    }
+    for (thread_list, gpa_list) |thread, *gpa| {
+        thread.join();
+        _ = gpa.deinit();
+    }
+    // Only output result after all threads are finished. Somehow placing in previous
+    // causes stdout to be weird (while file writer isn't affected).
+    for (config.beta_arr, result_list) |beta, result| {
         std.log.info(
             "interarrival time: {d:.4}, complexity: {d}, beta: {d}",
             .{ config.interarrival_time, config.complexity, beta },
         );
-        result_list[idx] = try runOnce(
-            config.allocator,
-            config.interarrival_time,
-            config.complexity,
-            beta,
-            config.seed,
-        );
-        std.log.info("discard ratio: {d:.3}", .{result_list[idx].discard_ratio});
-        std.log.info("storage uptime ratio: {d:.3}\n", .{result_list[idx].storage_server_uptime_ratio});
+        std.log.info("discard ratio: {d:.3}", .{result.discard_ratio});
+        std.log.info("storage uptime ratio: {d:.3}\n", .{result.storage_server_uptime_ratio});
     }
     // Write to result file.
     const cwd = std.fs.cwd();
@@ -131,7 +147,14 @@ pub fn simulatePrint(config: *const SimulatePrintConfig) !void {
 const builtin = @import("builtin");
 
 /// Run simulation once, and return statistic result.
-pub fn runOnce(allocator: std.mem.Allocator, interarrival_time: f64, complexity: f64, beta: usize, seed_base: u64) !SimulationResult {
+pub fn runOnce(
+    allocator: std.mem.Allocator,
+    interarrival_time: f64,
+    complexity: f64,
+    beta: usize,
+    seed_base: u64,
+    out_result: *SimulationResult,
+) !void {
     var system = try simulation.System.init(
         allocator,
         beta,
@@ -152,7 +175,7 @@ pub fn runOnce(allocator: std.mem.Allocator, interarrival_time: f64, complexity:
         try system.step();
     }
 
-    return .{
+    out_result.* = .{
         .discard_ratio = system.frame_discarded / system.frame_total,
         .storage_server_uptime_ratio = system.storage_server_uptime / system.clock,
     };

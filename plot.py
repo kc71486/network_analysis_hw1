@@ -1,13 +1,15 @@
-import matplotlib.pyplot as plt
+import sys
+
+import matplotlib.pyplot as plt # type: ignore
 
 # copy from other people
 
 # 繪製圖表的函數
-def plot():
+def plot(filename: str):
     buffer_sizes = [20, 40, 60, 80, 100] 
     loss_ratios = []
     utilizations = []
-    with open("result2.txt") as f:
+    with open(filename, mode="r") as f:
         for lines in f:
             if len(lines) == 0:
                 continue
@@ -16,7 +18,8 @@ def plot():
             utilizations.append(float(entry[1]))
 
     # 繪製圖表
-    plt.figure(figsize=(12, 5))
+    fig = plt.figure(figsize=(12, 5))
+    fig.suptitle(filename)
     
     # 影格遺失率圖表
     plt.subplot(1, 2, 1)
@@ -40,5 +43,6 @@ def plot():
     plt.show()
 
 if __name__ == "__main__":
+    filename = sys.argv[1]
     # 設定隨機數種子以確保結果可重現
-    plot()
+    plot(filename)

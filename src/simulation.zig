@@ -6,8 +6,8 @@ pub const System = struct {
     process_capacity_encoder: f64,
     process_capacity_storage: f64,
     event_list: EventList,
-    queue_encoder: DequeManaged(Field),
-    queue_storage: DequeManaged(Field),
+    queue_encoder: DequeUnmanaged(Field),
+    queue_storage: DequeUnmanaged(Field),
     clock: f64,
     encoder_field: ?Field,
     storage_busy: bool,
@@ -51,8 +51,8 @@ pub const System = struct {
             .process_capacity_encoder = process_capacity_encoder,
             .process_capacity_storage = process_capacity_storage,
             .event_list = EventList.init(),
-            .queue_encoder = DequeManaged(Field).init(allocator),
-            .queue_storage = DequeManaged(Field).init(allocator),
+            .queue_encoder = try DequeUnmanaged(Field).initCapacity(allocator, 0),
+            .queue_storage = try DequeUnmanaged(Field).initCapacity(allocator, 0),
             .clock = 0,
             .encoder_field = null,
             .storage_busy = false,
@@ -68,8 +68,8 @@ pub const System = struct {
         };
     }
     pub fn deinit(this: *System) void {
-        this.queue_encoder.deinit();
-        this.queue_storage.deinit();
+        this.queue_encoder.deinit(this.allocator);
+        this.queue_storage.deinit(this.allocator);
     }
     /// First step, initiate first event. Note: `System.init()` is the one that initialize variables.
     pub fn step0(this: *System) !void {
@@ -155,7 +155,7 @@ pub const System = struct {
                 this.prev_top_deleted = false;
             }
         } else {
-            try this.queue_encoder.append(cur_field);
+            try this.queue_encoder.append(this.allocator, cur_field);
             this.prev_top_deleted = false;
         }
         this.frame_total += 1;
@@ -217,7 +217,7 @@ pub const System = struct {
         }
         // arrival_storage part
         const cur_field: Field = event.field.?;
-        try this.queue_storage.append(cur_field);
+        try this.queue_storage.append(this.allocator, cur_field);
         if (!this.storage_busy) {
             if (this.queue_storage.items.len == 2) {
                 const top_field: Field = this.queue_storage.orderedRemove(0);
@@ -306,7 +306,6 @@ pub fn assert(ok: bool) void {
 }
 
 const deque_namespace = @import("deque.zig");
-const DequeManaged = @import("deque.zig").DequeManaged;
 const DequeUnmanaged = @import("deque.zig").DequeUnmanaged;
 
 const std = @import("std");

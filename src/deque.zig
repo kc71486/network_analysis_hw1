@@ -1206,15 +1206,11 @@ pub fn DequeUnmanaged(comptime T: type) type {
     };
 }
 
-/// Called when memory growth is necessary. Returns a capacity larger than
-/// minimum that grows super-linearly.
+/// Called when memory growth is necessary. Returns a capacity that grows
+/// exponentially.
 fn growCapacity(current: usize, minimum: usize) usize {
-    var new = current;
-    while (true) {
-        new +|= new / 2 + 8;
-        if (new >= minimum)
-            return new;
-    }
+    const new = current * 3 / 2 + 1;
+    return @max(new, minimum);
 }
 
 /// Integer addition returning `error.OutOfMemory` on overflow.

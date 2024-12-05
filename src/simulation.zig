@@ -6,8 +6,8 @@ pub const System = struct {
     process_capacity_encoder: f64,
     process_capacity_storage: f64,
     event_list: EventList,
-    queue_encoder: std.ArrayList(Field),
-    queue_storage: std.ArrayList(Field),
+    queue_encoder: DequeManaged(Field),
+    queue_storage: DequeManaged(Field),
     clock: f64,
     encoder_field: ?Field,
     storage_busy: bool,
@@ -51,8 +51,8 @@ pub const System = struct {
             .process_capacity_encoder = process_capacity_encoder,
             .process_capacity_storage = process_capacity_storage,
             .event_list = EventList.init(),
-            .queue_encoder = std.ArrayList(Field).init(allocator),
-            .queue_storage = std.ArrayList(Field).init(allocator),
+            .queue_encoder = DequeManaged(Field).init(allocator),
+            .queue_storage = DequeManaged(Field).init(allocator),
             .clock = 0,
             .encoder_field = null,
             .storage_busy = false,
@@ -304,6 +304,10 @@ pub fn assert(ok: bool) void {
         @panic("assertion failure.");
     }
 }
+
+const deque_namespace = @import("deque.zig");
+const DequeManaged = @import("deque.zig").DequeManaged;
+const DequeUnmanaged = @import("deque.zig").DequeUnmanaged;
 
 const std = @import("std");
 const EnumField = std.builtin.Type.EnumField;

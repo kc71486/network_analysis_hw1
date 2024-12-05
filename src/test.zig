@@ -41,13 +41,6 @@ test "Simulation steps" {
     defer system.deinit();
 }
 
-test "floatexp" {
-    var prng = std.Random.Xoshiro256.init(1);
-    const random = prng.random();
-    var f = random.floatExp(f64);
-    _ = &f;
-}
-
 /// Run for 600 sec to test if there is any issue.
 pub fn runOnce(allocator: std.mem.Allocator, interarrival_time: f64, complexity: f64, beta: usize, seed_base: u64) !void {
     var system = try simulation.System.init(

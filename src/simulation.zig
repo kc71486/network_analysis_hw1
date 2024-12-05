@@ -6,7 +6,7 @@ pub const System = struct {
     process_capacity_encoder: f64,
     process_capacity_storage: f64,
     event_list: EventList,
-    queue_encoder: DequeUnmanaged(Field),
+    queue_encoder: DequeFixed(Field),
     queue_storage: DequeUnmanaged(Field),
     clock: f64,
     encoder_field: ?Field,
@@ -51,8 +51,8 @@ pub const System = struct {
             .process_capacity_encoder = process_capacity_encoder,
             .process_capacity_storage = process_capacity_storage,
             .event_list = EventList.init(),
-            .queue_encoder = try DequeUnmanaged(Field).initCapacity(allocator, 0),
-            .queue_storage = try DequeUnmanaged(Field).initCapacity(allocator, 0),
+            .queue_encoder = try DequeFixed(Field).initCapacity(allocator, queue_encoder_buffer_limit),
+            .queue_storage = try DequeUnmanaged(Field).initCapacity(allocator, 40),
             .clock = 0,
             .encoder_field = null,
             .storage_busy = false,
@@ -138,7 +138,7 @@ pub const System = struct {
         assert(event.field != null);
         assert(this.queue_encoder_buffer_limit >= 2);
         const cur_field: Field = event.field.?;
-        const is_full: bool = this.queue_encoder.items.len == this.queue_encoder_buffer_limit;
+        const is_full: bool = this.queue_encoder.size() == this.queue_encoder_buffer_limit;
         // Determine if keep (add queue) or discard (frame_discarded +).
         if (this.prev_top_deleted) {
             assert(!cur_field.is_top); // Only happens when current is bottom.
@@ -149,13 +149,13 @@ pub const System = struct {
                 this.frame_discarded += 1;
                 this.prev_top_deleted = true;
             } else {
-                assert(this.queue_encoder.getLast().is_top);
-                _ = this.queue_encoder.pop();
+                assert(this.queue_encoder.peekLast().is_top);
+                _ = this.queue_encoder.popLast();
                 this.frame_discarded += 2;
                 this.prev_top_deleted = false;
             }
         } else {
-            try this.queue_encoder.append(this.allocator, cur_field);
+            this.queue_encoder.pushLast(cur_field);
             this.prev_top_deleted = false;
         }
         this.frame_total += 1;
@@ -163,9 +163,9 @@ pub const System = struct {
         // Schedule departure if server is empty and queue have something.
         if (this.encoder_field) |_| {
             // server busy
-        } else if (this.queue_encoder.items.len > 0) {
-            assert(this.queue_encoder.items.len == 1);
-            const first_field: Field = this.queue_encoder.orderedRemove(0);
+        } else if (this.queue_encoder.size() > 0) {
+            assert(this.queue_encoder.size() == 1);
+            const first_field: Field = this.queue_encoder.popFirst();
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
             this.event_list.add(.departure_encoder_arrival_storage, .{
                 .clock = next_clock + server_process_time,
@@ -203,10 +203,10 @@ pub const System = struct {
     fn handleDepartureEncoderArrivalStorage(this: *System, event: Event, next_clock: f64) !void {
         assert(this.encoder_field != null);
         // departure_encoder part
-        if (this.queue_encoder.items.len == 0) {
+        if (this.queue_encoder.size() == 0) {
             this.encoder_field = null;
         } else {
-            const first_field: Field = this.queue_encoder.orderedRemove(0);
+            const first_field: Field = this.queue_encoder.popFirst();
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
             this.event_list.add(.departure_encoder_arrival_storage, .{
                 .clock = next_clock + server_process_time,
@@ -217,11 +217,11 @@ pub const System = struct {
         }
         // arrival_storage part
         const cur_field: Field = event.field.?;
-        try this.queue_storage.append(this.allocator, cur_field);
+        try this.queue_storage.pushLast(this.allocator, cur_field);
         if (!this.storage_busy) {
-            if (this.queue_storage.items.len == 2) {
-                const top_field: Field = this.queue_storage.orderedRemove(0);
-                const bottom_field: Field = this.queue_storage.orderedRemove(0);
+            if (this.queue_storage.size() == 2) {
+                const top_field: Field = this.queue_storage.popFirst();
+                const bottom_field: Field = this.queue_storage.popFirst();
                 assert(top_field.is_top);
                 assert(!bottom_field.is_top);
                 const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
@@ -237,9 +237,9 @@ pub const System = struct {
     /// Handle storage departure event.
     fn handleDepartureStorage(this: *System, next_clock: f64) !void {
         assert(this.storage_busy);
-        if (this.queue_storage.items.len >= 2) {
-            const top_field: Field = this.queue_storage.orderedRemove(0);
-            const bottom_field: Field = this.queue_storage.orderedRemove(0);
+        if (this.queue_storage.size() >= 2) {
+            const top_field: Field = this.queue_storage.popFirst();
+            const bottom_field: Field = this.queue_storage.popFirst();
             assert(top_field.is_top);
             assert(!bottom_field.is_top);
             const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
@@ -305,8 +305,8 @@ pub fn assert(ok: bool) void {
     }
 }
 
-const deque_namespace = @import("deque.zig");
 const DequeUnmanaged = @import("deque.zig").DequeUnmanaged;
+const DequeFixed = @import("deque.zig").DequeFixed;
 
 const std = @import("std");
 const EnumField = std.builtin.Type.EnumField;

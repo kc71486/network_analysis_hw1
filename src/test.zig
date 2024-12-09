@@ -58,7 +58,7 @@ pub fn runOnce(allocator: std.mem.Allocator, interarrival_time: f64, complexity:
     );
     defer system.deinit();
     try system.step0();
-    while (system.clock < 600) {
+    while (system.prev_clock < 600) {
         try system.step();
     }
 }

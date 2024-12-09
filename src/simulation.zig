@@ -1,19 +1,30 @@
 pub const System = struct {
-    queue_encoder_buffer_limit: usize,
     mean_inter_arrival_time: f64,
     mean_frame_complexity: f64,
     frame_size_complexity_ratio: f64,
     process_capacity_encoder: f64,
     process_capacity_storage: f64,
+    /// Event list.
     event_list: EventList,
+    /// Encoder server buffer, limited size.
     queue_encoder: DequeFixed(Field),
+    /// Storage server buffer, unlimited size.
     queue_storage: DequeUnmanaged(Field),
-    clock: f64,
+    /// Clock before current event.
+    prev_clock: f64,
+    /// Clock that current event is.
+    cur_clock: f64,
+    /// Field in encoder server, null if encoder server is not busy.
     encoder_field: ?Field,
+    /// Whether storage server is busy.
     storage_busy: bool,
+    /// Whether previous top field got removed, causing current bottom field to be removed
     prev_top_deleted: bool,
+    /// Total frame discarded.
     frame_discarded: f64,
+    /// Total frame, discarded or not.
     frame_total: f64,
+    /// Total storage server busy time.
     storage_server_uptime: f64,
     prng_arrival_top: std.Random.Xoshiro256,
     prng_arrival_bottom: std.Random.Xoshiro256,
@@ -44,7 +55,6 @@ pub const System = struct {
             return error.StorageServerTooSlow;
         }
         return .{
-            .queue_encoder_buffer_limit = queue_encoder_buffer_limit,
             .mean_inter_arrival_time = mean_inter_arrival_time,
             .mean_frame_complexity = mean_frame_complexity,
             .frame_size_complexity_ratio = frame_size_complexity_ratio,
@@ -53,7 +63,8 @@ pub const System = struct {
             .event_list = EventList.init(),
             .queue_encoder = try DequeFixed(Field).initCapacity(allocator, queue_encoder_buffer_limit),
             .queue_storage = try DequeUnmanaged(Field).initCapacity(allocator, 40),
-            .clock = 0,
+            .prev_clock = 0,
+            .cur_clock = 0,
             .encoder_field = null,
             .storage_busy = false,
             .prev_top_deleted = false,
@@ -82,69 +93,71 @@ pub const System = struct {
         this.event_list.add(.arrival_encoder, .{
             .clock = inter_arrival_time,
             .tag = .arrival_encoder,
+
             .field = new_field,
         });
     }
     /// All subsequent steps. Updates state every time this function is called.
     pub fn step(this: *System) !void {
-        var event: Event = try this.getEvent();
-        _ = &event;
-        const next_clock: f64 = event.clock;
+        const event: Event = try this.getEvent();
+
+        assert(event.clock != std.math.inf(f64)); // assert again cuz why not
+        this.cur_clock = event.clock;
+
+        // update continuous stat counter
         if (this.storage_busy) {
-            this.storage_server_uptime += next_clock - this.clock;
+            this.storage_server_uptime += this.cur_clock - this.prev_clock;
         }
+
         switch (event.tag) {
             .arrival_encoder => {
-                try this.handleArrivalEncoder(event, next_clock);
+                try this.handleArrivalEncoder(event);
             },
             .departure_encoder_arrival_storage => {
-                try this.handleDepartureEncoderArrivalStorage(event, next_clock);
+                try this.handleDepartureEncoderArrivalStorage(event);
             },
             .departure_storage => {
-                try this.handleDepartureStorage(next_clock);
+                try this.handleDepartureStorage();
             },
-            .invalid => @panic("invalid event"),
         }
-        this.clock = next_clock;
+        this.prev_clock = this.cur_clock;
     }
+    /// Get nearest event from event list. There should be at least 1 pending event.
     fn getEvent(this: *System) !Event {
-        var event: Event = .{
+        var chosen: Event = .{
             .clock = std.math.inf(f64),
-            .tag = .invalid,
+            .tag = .arrival_encoder,
             .field = undefined,
         };
-        var event_idx: usize = 0;
+
+        _ = this.event_list.get(.arrival_encoder); // assert arrival_encoder in event_list
+
+        // pick nearest event using comptime trick
         const event_tag_arr: []const EnumField = @typeInfo(Event.Tag).@"enum".fields;
         inline for (event_tag_arr) |event_tag| {
-            const ev_opt = this.event_list.items[event_tag.value];
+            const ev_opt = this.event_list.items[event_tag.value]; // event_tag.value is int
             if (ev_opt) |ev| {
-                if (ev.clock <= event.clock) {
-                    event = ev;
-                    event_idx = event_tag.value;
+                if (ev.clock <= chosen.clock) {
+                    chosen = ev;
                 }
             }
         }
-        assert(this.event_list.items[@intFromEnum(Event.Tag.arrival_encoder)] != null);
-        assert(this.event_list.items[@intFromEnum(Event.Tag.invalid)] == null);
+        assert(chosen.clock != std.math.inf(f64)); // assert picked
 
-        this.event_list.items[event_idx] = null;
-        assert(event.clock != std.math.inf(f64));
-        assert(event.tag != .invalid);
+        this.event_list.remove(chosen.tag);
 
-        return event;
+        return chosen;
     }
     /// Handle encoder arrival event.
-    fn handleArrivalEncoder(this: *System, event: Event, next_clock: f64) !void {
+    fn handleArrivalEncoder(this: *System, event: Event) !void {
         assert(event.field != null);
-        assert(this.queue_encoder_buffer_limit >= 2);
         const cur_field: Field = event.field.?;
-        const is_full: bool = this.queue_encoder.size() == this.queue_encoder_buffer_limit;
         // Determine if keep (add queue) or discard (frame_discarded +).
         if (this.prev_top_deleted) {
             assert(!cur_field.is_top); // Only happens when current is bottom.
             this.frame_discarded += 1;
             this.prev_top_deleted = false;
-        } else if (is_full) {
+        } else if (this.queue_encoder.isFull()) {
             if (cur_field.is_top) {
                 this.frame_discarded += 1;
                 this.prev_top_deleted = true;
@@ -168,7 +181,7 @@ pub const System = struct {
             const first_field: Field = this.queue_encoder.popFirst();
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
             this.event_list.add(.departure_encoder_arrival_storage, .{
-                .clock = next_clock + server_process_time,
+                .clock = this.cur_clock + server_process_time,
                 .tag = .departure_encoder_arrival_storage,
                 .field = first_field,
             });
@@ -194,13 +207,13 @@ pub const System = struct {
             .complexity = random_complexity.floatExp(f64) * this.mean_frame_complexity,
         };
         this.event_list.add(.arrival_encoder, .{
-            .clock = next_clock + inter_arrival_time,
+            .clock = this.cur_clock + inter_arrival_time,
             .tag = .arrival_encoder,
             .field = new_field,
         });
     }
     /// Handle encoder departure and storage arrival event.
-    fn handleDepartureEncoderArrivalStorage(this: *System, event: Event, next_clock: f64) !void {
+    fn handleDepartureEncoderArrivalStorage(this: *System, event: Event) !void {
         assert(this.encoder_field != null);
         // departure_encoder part
         if (this.queue_encoder.size() == 0) {
@@ -209,7 +222,7 @@ pub const System = struct {
             const first_field: Field = this.queue_encoder.popFirst();
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
             this.event_list.add(.departure_encoder_arrival_storage, .{
-                .clock = next_clock + server_process_time,
+                .clock = this.cur_clock + server_process_time,
                 .tag = .departure_encoder_arrival_storage,
                 .field = first_field,
             });
@@ -218,24 +231,22 @@ pub const System = struct {
         // arrival_storage part
         const cur_field: Field = event.field.?;
         try this.queue_storage.pushLast(this.allocator, cur_field);
-        if (!this.storage_busy) {
-            if (this.queue_storage.size() == 2) {
-                const top_field: Field = this.queue_storage.popFirst();
-                const bottom_field: Field = this.queue_storage.popFirst();
-                assert(top_field.is_top);
-                assert(!bottom_field.is_top);
-                const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
-                this.event_list.add(.departure_storage, .{
-                    .clock = next_clock + storage_time,
-                    .tag = .departure_storage,
-                    .field = null, // field drain
-                });
-                this.storage_busy = true;
-            }
+        if (!this.storage_busy and this.queue_storage.size() == 2) {
+            const top_field: Field = this.queue_storage.popFirst();
+            const bottom_field: Field = this.queue_storage.popFirst();
+            assert(top_field.is_top);
+            assert(!bottom_field.is_top);
+            const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
+            this.event_list.add(.departure_storage, .{
+                .clock = this.cur_clock + storage_time,
+                .tag = .departure_storage,
+                .field = null, // field drain
+            });
+            this.storage_busy = true;
         }
     }
     /// Handle storage departure event.
-    fn handleDepartureStorage(this: *System, next_clock: f64) !void {
+    fn handleDepartureStorage(this: *System) !void {
         assert(this.storage_busy);
         if (this.queue_storage.size() >= 2) {
             const top_field: Field = this.queue_storage.popFirst();
@@ -244,7 +255,7 @@ pub const System = struct {
             assert(!bottom_field.is_top);
             const storage_time: f64 = (top_field.complexity + bottom_field.complexity) * this.frame_size_complexity_ratio / this.process_capacity_storage;
             this.event_list.add(.departure_storage, .{
-                .clock = next_clock + storage_time,
+                .clock = this.cur_clock + storage_time,
                 .tag = .departure_storage,
                 .field = null, // field drain
             });
@@ -259,6 +270,7 @@ const Field = struct {
     complexity: f64,
 };
 
+/// Array with enum tag as index. Stores null if such event type doesn't exist.
 const EventList = struct {
     const item_len: usize = @typeInfo(Event.Tag).@"enum".fields.len;
 
@@ -270,19 +282,26 @@ const EventList = struct {
             .items = .{null} ** item_len,
         };
     }
-    // Add the event with tag
+    /// Add the event with tag.
     pub fn add(this: *EventList, tag: Event.Tag, event: Event) void {
         assert(this.items[@intFromEnum(tag)] == null);
         this.items[@intFromEnum(tag)] = event;
     }
-    // Remove the event with tag
+    /// Remove the event with tag.
     pub fn remove(this: *EventList, tag: Event.Tag) void {
         assert(this.items[@intFromEnum(tag)] != null);
         this.items[@intFromEnum(tag)] = null;
     }
-    // Get the value from tag
-    pub fn get(this: *const EventList, tag: Event.Tag) *Event {
-        return *this.items[@intFromEnum(tag)];
+    /// Get the value from tag, assert it can be founded.
+    pub fn get(this: *const EventList, tag: Event.Tag) *const Event {
+        assert(this.items[@intFromEnum(tag)] != null);
+        return &this.items[@intFromEnum(tag)].?;
+    }
+    /// Get the value from tag, returns null if not found.
+    pub fn getorNull(this: *const EventList, tag: Event.Tag) ?*const Event {
+        if (this.items[@intFromEnum(tag)] == null)
+            return null;
+        return &this.items[@intFromEnum(tag)].?;
     }
 };
 
@@ -295,14 +314,12 @@ const Event = struct {
         arrival_encoder,
         departure_encoder_arrival_storage,
         departure_storage,
-        invalid,
     };
 };
 
 pub fn assert(ok: bool) void {
-    if (!ok) {
-        @panic("assertion failure.");
-    }
+    if (!ok)
+        unreachable;
 }
 
 const DequeUnmanaged = @import("deque.zig").DequeUnmanaged;

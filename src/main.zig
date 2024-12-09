@@ -1,6 +1,5 @@
-/// Overrides options
-pub const std_options = .{
-    // Set the log level to warn
+/// Global configuration, overrides stdlib-wise options.
+pub const std_options: std.Options = .{
     .log_level = .warn,
 };
 
@@ -8,6 +7,10 @@ const ArgOptions = struct {
     seed: u64,
     do_plot: bool,
     pyname: []const u8,
+
+    fn deinit(this: *const ArgOptions, allocator: std.mem.Allocator) void {
+        allocator.free(this.pyname);
+    }
 };
 
 const SimulatePrintConfig = struct {
@@ -34,9 +37,9 @@ pub fn main() !void {
     const cwd = std.fs.cwd();
 
     const arg_option: ArgOptions = try argParse(allocator);
-    defer allocator.free(arg_option.pyname);
+    defer arg_option.deinit(allocator);
 
-    try simulatePrint(&.{
+    try execute(&.{
         .cwd = cwd,
         .allocator = allocator,
         .file_name = "result1.txt",
@@ -47,7 +50,7 @@ pub fn main() !void {
         .do_plot = arg_option.do_plot,
         .pyname = arg_option.pyname,
     });
-    try simulatePrint(&.{
+    try execute(&.{
         .cwd = cwd,
         .allocator = allocator,
         .file_name = "result2.txt",
@@ -91,15 +94,17 @@ pub fn argParse(allocator: std.mem.Allocator) !ArgOptions {
     return arg_option;
 }
 
-/// Simulate and print
-pub fn simulatePrint(config: *const SimulatePrintConfig) !void {
+/// Simulate, print (if specified), output file, and plot (if specified)
+pub fn execute(config: *const SimulatePrintConfig) !void {
     const thread_list: []std.Thread = try config.allocator.alloc(std.Thread, config.beta_arr.len);
     defer config.allocator.free(thread_list);
+    // Seperate allocator for each runs/threads.
     const gpa_list: []std.heap.GeneralPurposeAllocator(.{}) = try config.allocator.alloc(std.heap.GeneralPurposeAllocator(.{}), config.beta_arr.len);
     defer config.allocator.free(gpa_list);
+    // Result for each runs/threads.
     const result_list: []SimulationResult = try config.allocator.alloc(SimulationResult, config.beta_arr.len);
     defer config.allocator.free(result_list);
-    // Pass argument to `runOnce`.
+    // Run `runOnce` in each threads, and pass argument to them.
     for (config.beta_arr, thread_list, gpa_list, result_list) |beta, *thread, *gpa, *result| {
         gpa.* = std.heap.GeneralPurposeAllocator(.{}).init;
         thread.* = try std.Thread.spawn(.{
@@ -139,12 +144,11 @@ pub fn simulatePrint(config: *const SimulatePrintConfig) !void {
     if (config.do_plot) {
         const argv: []const []const u8 = &.{ config.pyname, "plot.py", config.file_name };
         var child = std.process.Child.init(argv, config.allocator);
+        // Note: if childprocess errors before prom ends, there will be zombie process, need to manually ctrl+c.
+        // I am too dumb to figure out how to spawn independent process in c/zig.
         try child.spawn();
-        //_ = try child.wait();
     }
 }
-
-const builtin = @import("builtin");
 
 /// Run simulation once, and return statistic result.
 pub fn runOnce(
@@ -171,16 +175,18 @@ pub fn runOnce(
     defer system.deinit();
 
     try system.step0();
-    while (system.clock < 3600 * 8) {
+    while (system.prev_clock < 3600 * 8) {
         try system.step();
     }
 
     out_result.* = .{
         .discard_ratio = system.frame_discarded / system.frame_total,
-        .storage_server_uptime_ratio = system.storage_server_uptime / system.clock,
+        .storage_server_uptime_ratio = system.storage_server_uptime / system.prev_clock,
     };
 }
 
 const simulation = @import("simulation.zig");
 
 const std = @import("std");
+
+const builtin = @import("builtin");

@@ -4,9 +4,8 @@ const math = std.math;
 const Allocator = std.mem.Allocator;
 
 fn assert(ok: bool) void {
-    if (!ok) {
+    if (!ok)
         unreachable;
-    }
 }
 
 /// Fixed size deque.

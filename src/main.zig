@@ -61,6 +61,17 @@ pub fn main() !void {
         .do_plot = arg_option.do_plot,
         .pyname = arg_option.pyname,
     });
+    try execute(&.{
+        .cwd = cwd,
+        .allocator = allocator,
+        .file_name = "result3.txt",
+        .interarrival_time = 1.0 / 120.0,
+        .complexity = 200.0,
+        .beta_arr = &.{ 3, 5, 10, 20 },
+        .seed = arg_option.seed,
+        .do_plot = arg_option.do_plot,
+        .pyname = arg_option.pyname,
+    });
 }
 
 /// Parse system arguments into a struct.
@@ -137,8 +148,8 @@ pub fn execute(config: *const SimulatePrintConfig) !void {
     var file = try cwd.createFile(config.file_name, .{ .read = false });
     defer file.close();
     var writer = file.writer();
-    for (result_list) |result| {
-        try writer.print("{d:.4} {d:.4}\n", .{ result.discard_ratio, result.storage_server_uptime_ratio });
+    for (result_list, config.beta_arr) |result, beta| {
+        try writer.print("{d} {d:.4} {d:.4}\n", .{ beta, result.discard_ratio, result.storage_server_uptime_ratio });
     }
     // Plot using python matplotlib.
     if (config.do_plot) {

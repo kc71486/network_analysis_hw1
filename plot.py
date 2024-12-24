@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt # type: ignore
 
 # 繪製圖表的函數
 def plot(filename: str):
-    buffer_sizes = [20, 40, 60, 80, 100] 
+    buffer_sizes = []
     loss_ratios = []
     utilizations = []
     with open(filename, mode="r") as f:
@@ -14,8 +14,9 @@ def plot(filename: str):
             if len(lines) == 0:
                 continue
             entry = lines.split(" ")
-            loss_ratios.append(float(entry[0]))
-            utilizations.append(float(entry[1]))
+            buffer_sizes.append(int(entry[0]))
+            loss_ratios.append(float(entry[1]))
+            utilizations.append(float(entry[2]))
 
     # 繪製圖表
     fig = plt.figure(figsize=(12, 5))

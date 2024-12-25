@@ -42,7 +42,7 @@ pub fn main() !void {
     try execute(&.{
         .cwd = cwd,
         .allocator = allocator,
-        .file_name = "result1.txt",
+        .file_name = "complexity_200.txt",
         .interarrival_time = 1.0 / 120.0,
         .complexity = 200.0,
         .beta_arr = &.{ 20, 40, 60, 80, 100 },
@@ -53,7 +53,7 @@ pub fn main() !void {
     try execute(&.{
         .cwd = cwd,
         .allocator = allocator,
-        .file_name = "result2.txt",
+        .file_name = "complexity_400.txt",
         .interarrival_time = 1.0 / 240.0,
         .complexity = 400.0,
         .beta_arr = &.{ 20, 40, 60, 80, 100 },
@@ -64,7 +64,7 @@ pub fn main() !void {
     try execute(&.{
         .cwd = cwd,
         .allocator = allocator,
-        .file_name = "result3.txt",
+        .file_name = "complexity_200_low_beta.txt",
         .interarrival_time = 1.0 / 120.0,
         .complexity = 200.0,
         .beta_arr = &.{ 3, 5, 10, 20 },

@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 
 import matplotlib.pyplot as plt # type: ignore
@@ -20,7 +21,7 @@ def plot(filename: str):
 
     # 繪製圖表
     fig = plt.figure(figsize=(12, 5))
-    fig.suptitle(filename)
+    fig.suptitle(Path(filename).stem)
     
     # 影格遺失率圖表
     plt.subplot(1, 2, 1)

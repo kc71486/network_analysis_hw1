@@ -1,16 +1,16 @@
 import random
 import math
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt # type: ignore
 from collections import deque
 import time
 
 class VideoField:
     """代表視訊欄位的類別"""
-    def __init__(self, arrival_time, is_top, complexity):
-        self.arrival_time = arrival_time  # 到達時間
-        self.is_top = is_top             # 是否為上欄位
-        self.complexity = complexity      # 複雜度(fobs)
-        self.encoding_completion_time = 0 # 編碼完成時間
+    def __init__(self, arrival_time: float, is_top: bool, complexity: float):
+        self.arrival_time: float = arrival_time  # 到達時間
+        self.is_top: bool = is_top             # 是否為上欄位
+        self.complexity: float = complexity      # 複雜度(fobs)
+        self.encoding_completion_time: float = 0 # 編碼完成時間
 
 class VideoStorageSimulation:
     def __init__(self, buffer_size, sim_duration, tau, h, alpha, C_enc, C_storage):
@@ -25,17 +25,17 @@ class VideoStorageSimulation:
         
         # 系統狀態
         self.current_time = 0            # 目前時間
-        self.encoder_buffer = deque()    # 編碼器緩衝區
-        self.storage_queue = deque()     # 儲存佇列
+        self.encoder_buffer: deque[VideoField] = deque()    # 編碼器緩衝區
+        self.storage_queue: deque[VideoField] = deque()     # 儲存佇列
         self.is_storage_server_busy = False  # 儲存伺服器狀態
         self.next_field_is_top = True    # 下一個欄位是否為上欄位
         
         # 統計計數器
-        self.total_frames = 0            # 總影格數
-        self.lost_frames = 0             # 遺失影格數
-        self.storage_busy_time = 0       # 儲存伺服器忙碌時間
-        self.last_storage_state_change = 0  # 上次儲存狀態改變時間
-        self.skip_next_field = False     #判斷是否跳過下個FIELD
+        self.total_frames: int = 0            # 總影格數
+        self.lost_frames: int = 0             # 遺失影格數
+        self.storage_busy_time: float = 0       # 儲存伺服器忙碌時間
+        self.last_storage_state_change: float = 0  # 上次儲存狀態改變時間
+        self.skip_next_field: bool = False     #判斷是否跳過下個FIELD
         
         # 事件佇列
         self.event_queue = []  # (時間, 事件類型, 額外資料)
@@ -71,7 +71,7 @@ class VideoStorageSimulation:
                 self.lost_frames += 1  # 只計算當前欄位
                 self.skip_next_field = True  # 標記下一個要跳過
             else:
-                if getattr(self, 'skip_next_field', False):
+                if not self.skip_next_field:
                     self.lost_frames += 1  # 因為上一個top被丟棄而跳過
                     self.skip_next_field = False
                 else:
@@ -80,7 +80,7 @@ class VideoStorageSimulation:
                         self.lost_frames += 1      # 計算被移除的欄位
                     self.lost_frames += 1          # 計算當前下欄位
         else:
-            if not new_field.is_top and getattr(self, 'skip_next_field', False):
+            if not new_field.is_top and not self.skip_next_field:
                 self.lost_frames += 1
                 self.skip_next_field = False
             else:
@@ -175,6 +175,8 @@ class VideoStorageSimulation:
                 self.handle_encoding_completion()
             elif event_type == "storage_completion":
                 self.handle_storage_completion()
+            else:
+                assert False
                 
         # 計算最終統計資料
         if self.is_storage_server_busy:
@@ -234,7 +236,6 @@ def run_simulations():
     plt.ylabel('Frame Loss Ratio (f)')
     plt.title('Frame Loss Ratio vs Buffer Size')
     plt.grid(True)
-    plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.4f'))
     plt.ylim(0.8, 1.0)
     # 儲存伺服器使用率圖表
     plt.subplot(1, 2, 2)
@@ -242,7 +243,6 @@ def run_simulations():
     plt.xlabel('Buffer Size (β)')
     plt.ylabel('Storage Server Utilization (u)')
     plt.title('Storage Server Utilization vs Buffer Size')
-    plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.4f'))
     plt.ylim(0.0, 2.0)
     plt.grid(True)
     

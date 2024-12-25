@@ -4,9 +4,7 @@ zig-out
 network_sim
 network_sim.exe
 
-result1.txt
-result2.txt
-result3.txt
+*.txt
 
 env
 

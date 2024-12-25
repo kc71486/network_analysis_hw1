@@ -157,18 +157,16 @@ pub const System = struct {
             assert(!cur_field.is_top); // Only happens when current is bottom.
             this.frame_discarded += 1;
             this.prev_top_deleted = false;
-        } else if (this.queue_encoder.isFull()) {
-            if (cur_field.is_top) {
-                this.frame_discarded += 1;
-                this.prev_top_deleted = true;
-            } else {
-                assert(this.queue_encoder.peekLast().is_top);
-                _ = this.queue_encoder.popLast();
-                this.frame_discarded += 2;
-                this.prev_top_deleted = false;
-            }
-        } else {
+        } else if (!this.queue_encoder.isFull()) {
             this.queue_encoder.pushLast(cur_field);
+            this.prev_top_deleted = false;
+        } else if (cur_field.is_top) {
+            this.frame_discarded += 1;
+            this.prev_top_deleted = true;
+        } else {
+            assert(this.queue_encoder.peekLast().is_top);
+            _ = this.queue_encoder.popLast();
+            this.frame_discarded += 2;
             this.prev_top_deleted = false;
         }
         this.frame_total += 1;
@@ -176,7 +174,11 @@ pub const System = struct {
         // Schedule departure if server is empty and queue have something.
         if (this.encoder_field) |_| {
             // server busy
-        } else if (this.queue_encoder.size() > 0) {
+        } else if (this.queue_encoder.size() == 0) {
+            // Happens when previous top got discarded, and the queue got emptied.
+            assert(!cur_field.is_top);
+            assert(!this.prev_top_deleted);
+        } else {
             assert(this.queue_encoder.size() == 1);
             const first_field: Field = this.queue_encoder.popFirst();
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
@@ -186,10 +188,6 @@ pub const System = struct {
                 .field = first_field,
             });
             this.encoder_field = first_field;
-        } else {
-            // Happens when previous top got discarded, and the queue got emptied.
-            assert(!cur_field.is_top);
-            assert(!this.prev_top_deleted);
         }
         var random_arrival: std.Random = undefined;
         var random_complexity: std.Random = undefined;

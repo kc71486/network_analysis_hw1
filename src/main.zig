@@ -6,6 +6,7 @@ pub const std_options: std.Options = .{
 const ArgOptions = struct {
     seed: u64,
     do_plot: bool,
+    count: u32,
     pyname: []const u8,
 
     fn deinit(this: *const ArgOptions, allocator: std.mem.Allocator) void {
@@ -21,6 +22,7 @@ const SimulatePrintConfig = struct {
     complexity: f64,
     beta_arr: []const usize,
     seed: u64,
+    count: u32,
     do_plot: bool,
     pyname: []const u8,
 };
@@ -47,6 +49,7 @@ pub fn main() !void {
         .complexity = 200.0,
         .beta_arr = &.{ 20, 40, 60, 80, 100 },
         .seed = arg_option.seed,
+        .count = arg_option.count,
         .do_plot = arg_option.do_plot,
         .pyname = arg_option.pyname,
     });
@@ -58,6 +61,7 @@ pub fn main() !void {
         .complexity = 400.0,
         .beta_arr = &.{ 20, 40, 60, 80, 100 },
         .seed = arg_option.seed,
+        .count = arg_option.count,
         .do_plot = arg_option.do_plot,
         .pyname = arg_option.pyname,
     });
@@ -69,6 +73,7 @@ pub fn main() !void {
         .complexity = 200.0,
         .beta_arr = &.{ 3, 5, 10, 20 },
         .seed = arg_option.seed,
+        .count = arg_option.count,
         .do_plot = arg_option.do_plot,
         .pyname = arg_option.pyname,
     });
@@ -81,6 +86,7 @@ pub fn argParse(allocator: std.mem.Allocator) !ArgOptions {
     var arg_option: ArgOptions = .{
         .seed = 1100,
         .do_plot = true,
+        .count = 1,
         .pyname = try allocator.dupe(u8, defaultpyname),
     };
 
@@ -91,6 +97,8 @@ pub fn argParse(allocator: std.mem.Allocator) !ArgOptions {
     while (arg_iterator.next()) |arg| {
         if (std.mem.eql(u8, arg, "--seed")) {
             arg_option.seed = try std.fmt.parseInt(u64, arg_iterator.next().?, 10);
+        } else if (std.mem.eql(u8, arg, "--count")) {
+            arg_option.count = try std.fmt.parseInt(u32, arg_iterator.next().?, 10);
         } else if (std.mem.eql(u8, arg, "--plot")) {
             arg_option.do_plot = true;
         } else if (std.mem.eql(u8, arg, "--noplot")) {
@@ -120,12 +128,13 @@ pub fn execute(config: *const SimulatePrintConfig) !void {
         gpa.* = std.heap.GeneralPurposeAllocator(.{}).init;
         thread.* = try std.Thread.spawn(.{
             .allocator = config.allocator,
-        }, runOnce, .{
+        }, runCount, .{
             gpa.allocator(), // allocator
             config.interarrival_time, // interarrival_time
             config.complexity, // complexity
             beta, // beta
             config.seed, // seed_base
+            config.count, // run count
             result, // out_result
         });
     }
@@ -155,44 +164,50 @@ pub fn execute(config: *const SimulatePrintConfig) !void {
     if (config.do_plot) {
         const argv: []const []const u8 = &.{ config.pyname, "plot.py", config.file_name };
         var child = std.process.Child.init(argv, config.allocator);
-        // Note: if childprocess errors before prom ends, there will be zombie process, need to manually ctrl+c.
+        // Note: if childprocess errors before program ends, there will be zombie process, need to manually ctrl+c.
         // I am too dumb to figure out how to spawn independent process in c/zig.
-        try child.spawn();
+        try child.spawn(); // (detach)
     }
 }
 
-/// Run simulation once, and return statistic result.
-pub fn runOnce(
+/// Run simulation count times, and return average statistic result.
+pub fn runCount(
     allocator: std.mem.Allocator,
     interarrival_time: f64,
     complexity: f64,
     beta: usize,
     seed_base: u64,
+    count: u32,
     out_result: *SimulationResult,
 ) !void {
-    var system = try simulation.System.init(
-        allocator,
-        beta,
-        interarrival_time,
-        complexity,
-        0.1,
-        15800,
-        1600,
-        seed_base,
-        seed_base +% 100,
-        seed_base +% 200,
-        seed_base +% 300,
-    );
-    defer system.deinit();
+    var total_discard_ratio: f64 = 0;
+    var total_storage_server_uptime_ratio: f64 = 0;
+    for (0..count) |_| {
+        var system = try simulation.System.init(
+            allocator,
+            beta,
+            interarrival_time,
+            complexity,
+            0.1,
+            15800,
+            1600,
+            seed_base +% (0 + count * 100),
+            seed_base +% (10000 + count * 100),
+            seed_base +% (20000 + count * 100),
+            seed_base +% (30000 + count * 100),
+        );
+        defer system.deinit();
 
-    try system.step0();
-    while (system.prev_clock < 3600 * 8) {
-        try system.step();
+        try system.step0();
+        while (system.prev_clock < 3600 * 8) {
+            try system.step();
+        }
+        total_discard_ratio += system.frame_discarded / system.frame_total;
+        total_storage_server_uptime_ratio += system.storage_server_uptime / system.prev_clock;
     }
-
     out_result.* = .{
-        .discard_ratio = system.frame_discarded / system.frame_total,
-        .storage_server_uptime_ratio = system.storage_server_uptime / system.prev_clock,
+        .discard_ratio = total_discard_ratio / @as(f64, @floatFromInt(count)),
+        .storage_server_uptime_ratio = total_storage_server_uptime_ratio / @as(f64, @floatFromInt(count)),
     };
 }
 

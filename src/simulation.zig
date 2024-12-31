@@ -218,13 +218,13 @@ pub const System = struct {
             this.encoder_field = null;
         } else {
             const first_field: Field = this.queue_encoder.popFirst();
+            this.encoder_field = first_field;
             const server_process_time: f64 = first_field.complexity / this.process_capacity_encoder;
             this.event_list.add(.departure_encoder_arrival_storage, .{
                 .clock = this.cur_clock + server_process_time,
                 .tag = .departure_encoder_arrival_storage,
                 .field = first_field,
             });
-            this.encoder_field = first_field;
         }
         // arrival_storage part
         const cur_field: Field = event.field.?;
